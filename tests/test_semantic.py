@@ -66,6 +66,16 @@ class TestValidPrograms:
     def test_function_mixed_param_types(self):
         analyze("fn f(x: int, flag: bool) -> bool { return flag; }")
 
+    def test_function_six_params_accepted(self):
+        src = "fn f(a: int, b: int, c: int, d: int, e: int, g: int) -> int { return a; }"
+        analyze(src)
+
+    def test_for_loop_body_var_shadows_loop_var(self):
+        # Body has its own inner scope, so 'i' inside the body does not conflict
+        # with the loop induction variable 'i'.
+        src = "fn f() { for i = 0; i < 5; i = i + 1 { int i = 99; } }"
+        analyze(src)
+
     def test_mutually_recursive_functions(self):
         # Pass 1 registers both signatures so each can call the other.
         src = """
@@ -315,3 +325,20 @@ class TestDuplicateDeclaration:
         src = "int x = 0;\nint x = 1;"
         exc = raises(src)
         assert exc.value.line == 2
+
+
+# ---------------------------------------------------------------------------
+# Implementation limits
+# ---------------------------------------------------------------------------
+
+class TestImplementationLimits:
+    def test_seven_params_rejected(self):
+        src = "fn f(a: int, b: int, c: int, d: int, e: int, g: int, h: int) -> int { return a; }"
+        exc = raises(src)
+        assert "Implementation Limit" in exc.value.message
+        assert "7" in exc.value.message
+
+    def test_seven_params_error_names_function(self):
+        src = "fn too_many(a: int, b: int, c: int, d: int, e: int, g: int, h: int) -> int { return a; }"
+        exc = raises(src)
+        assert "too_many" in exc.value.message

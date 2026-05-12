@@ -21,7 +21,6 @@ class TokenType(Enum):
     INT    = "int"
     FLOAT  = "float"
     BOOL   = "bool"
-    STR    = "str"
     STRING = "string"
 
     # Keywords — boolean values
@@ -79,7 +78,6 @@ KEYWORDS: dict[str, TokenType] = {
     "int":    TokenType.INT,
     "float":  TokenType.FLOAT,
     "bool":   TokenType.BOOL,
-    "str":    TokenType.STR,
     "string": TokenType.STRING,
     "true":   TokenType.TRUE,
     "false":  TokenType.FALSE,
@@ -184,14 +182,20 @@ class Lexer:
         while self.current_char is not None and self.current_char.isdigit():
             digits.append(self.current_char)
             self._advance()
-        next_char = self._peek()
-        if self.current_char == "." and next_char is not None and next_char.isdigit():
-            digits.append(".")
-            self._advance()
-            while self.current_char is not None and self.current_char.isdigit():
-                digits.append(self.current_char)
+        if self.current_char == ".":
+            next_char = self._peek()
+            if next_char is not None and next_char.isdigit():
+                digits.append(".")
                 self._advance()
-            return Token(type=TokenType.FLOAT_LITERAL, value=float("".join(digits)), line=start_line, col=start_col)
+                while self.current_char is not None and self.current_char.isdigit():
+                    digits.append(self.current_char)
+                    self._advance()
+                return Token(type=TokenType.FLOAT_LITERAL, value=float("".join(digits)), line=start_line, col=start_col)
+            raise CompilerError(
+                message=f"invalid number literal: trailing '.'",
+                line=start_line,
+                col=start_col,
+            )
         return Token(type=TokenType.INTEGER, value=int("".join(digits)), line=start_line, col=start_col)
 
     def _read_string(self) -> Token:

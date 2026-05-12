@@ -126,6 +126,16 @@ class SemanticAnalyzer(ASTVisitor):
     # --- declarations -------------------------------------------------
 
     def visit_function_decl(self, node: FunctionDecl) -> None:
+        if len(node.params) > 6:
+            raise CompilerError(
+                message=(
+                    f"Implementation Limit: Function parameters exceeding 6 are not yet supported "
+                    f"(X86-64 ABI stack spilling not implemented). "
+                    f"'{node.name}' declares {len(node.params)}."
+                ),
+                line=node.line,
+                col=node.col,
+            )
         saved_return_type = self._current_return_type
         self._current_return_type = node.return_type if node.return_type is not None else "void"
         self._push_scope()
@@ -188,7 +198,8 @@ class SemanticAnalyzer(ASTVisitor):
     def visit_for_stmt(self, node: ForStmt) -> None:
         init_type = node.init_value.accept(self)
         self._assert_type("int", init_type, node.line, node.col, context="for-loop initializer")
-        # The loop variable is implicitly int, visible inside the loop scope.
+        # Loop scope: holds only the induction variable. The step expression is
+        # evaluated here so it can see the counter but not body-local variables.
         self._push_scope()
         loop_sym = Symbol(name=node.var_name, type="int",
                           category="var", line=node.line, col=node.col)
@@ -197,7 +208,11 @@ class SemanticAnalyzer(ASTVisitor):
         self._assert_type("bool", cond_type, node.line, node.col, context="for-loop condition")
         step_type = node.step_value.accept(self)
         self._assert_type("int", step_type, node.line, node.col, context="for-loop step")
+        # Body scope: isolated from the step so body-local declarations cannot
+        # collide with or shadow the induction variable at the step level.
+        self._push_scope()
         node.body.accept(self)
+        self._pop_scope()
         self._pop_scope()
 
     def visit_return_stmt(self, node: ReturnStmt) -> None:
@@ -226,6 +241,7 @@ class SemanticAnalyzer(ASTVisitor):
                 line=node.line,
                 col=node.col,
             )
+        node.eval_type = sym.type
         return sym.type
 
     def visit_unary_op(self, node: UnaryOp) -> str:
@@ -242,6 +258,7 @@ class SemanticAnalyzer(ASTVisitor):
                 line=node.line,
                 col=node.col,
             )
+        node.eval_type = operand_type
         return operand_type
 
     def visit_binary_op(self, node: BinaryOp) -> str:
@@ -249,14 +266,17 @@ class SemanticAnalyzer(ASTVisitor):
         right_type = node.right.accept(self)
         op = node.op
         if op in _ARITHMETIC_OPS:
-            return self._check_arithmetic(op, left_type, right_type, node.line, node.col)
-        if op in _COMPARISON_OPS:
-            return self._check_comparison(op, left_type, right_type, node.line, node.col)
-        if op in _EQUALITY_OPS:
-            return self._check_equality(op, left_type, right_type, node.line, node.col)
-        if op in _LOGICAL_OPS:
-            return self._check_logical(op, left_type, right_type, node.line, node.col)
-        raise CompilerError(message=f"unknown operator '{op}'", line=node.line, col=node.col)
+            result = self._check_arithmetic(op, left_type, right_type, node.line, node.col)
+        elif op in _COMPARISON_OPS:
+            result = self._check_comparison(op, left_type, right_type, node.line, node.col)
+        elif op in _EQUALITY_OPS:
+            result = self._check_equality(op, left_type, right_type, node.line, node.col)
+        elif op in _LOGICAL_OPS:
+            result = self._check_logical(op, left_type, right_type, node.line, node.col)
+        else:
+            raise CompilerError(message=f"unknown operator '{op}'", line=node.line, col=node.col)
+        node.eval_type = result
+        return result
 
     def visit_func_call(self, node: FuncCall) -> str:
         sym = self.current_scope.lookup(node.name)
@@ -274,6 +294,7 @@ class SemanticAnalyzer(ASTVisitor):
             )
         for arg in node.args:
             arg.accept(self)
+        node.eval_type = sym.type
         return sym.type
 
     def visit_index_expr(self, node: IndexExpr) -> str:
@@ -286,14 +307,17 @@ class SemanticAnalyzer(ASTVisitor):
             )
         self._require_int_index(node.index)
         if sym.type == "string":
-            return "int"
-        if not sym.type.startswith("["):
+            result = "int"
+        elif not sym.type.startswith("["):
             raise CompilerError(
                 message=f"'{node.name}' is not indexable",
                 line=node.line,
                 col=node.col,
             )
-        return self._array_element_type(sym.type)
+        else:
+            result = self._array_element_type(sym.type)
+        node.eval_type = result
+        return result
 
     def visit_index_assign_stmt(self, node: IndexAssignStmt) -> None:
         sym = self.current_scope.lookup(node.name)

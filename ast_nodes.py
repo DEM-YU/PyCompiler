@@ -70,6 +70,7 @@ class StringLiteral(ASTNode):
 class Identifier(ASTNode):
     # grammar: ID
     name: str
+    eval_type: str = "int"
 
     def accept(self, visitor: ASTVisitor) -> Any:
         return visitor.visit_identifier(self)
@@ -81,6 +82,7 @@ class BinaryOp(ASTNode):
     op: str   # "+" | "-" | "*" | "/" | "%" | "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||"
     left: ASTNode
     right: ASTNode
+    eval_type: str = "int"
 
     def accept(self, visitor: ASTVisitor) -> Any:
         return visitor.visit_binary_op(self)
@@ -91,6 +93,7 @@ class UnaryOp(ASTNode):
     # grammar: ("-" | "!") unary_expr
     op: str   # "-" | "!"
     operand: ASTNode
+    eval_type: str = "int"
 
     def accept(self, visitor: ASTVisitor) -> Any:
         return visitor.visit_unary_op(self)
@@ -101,6 +104,7 @@ class FuncCall(ASTNode):
     # grammar: ID "(" arg_list? ")"
     name: str
     args: list[ASTNode]
+    eval_type: str = "int"
 
     def accept(self, visitor: ASTVisitor) -> Any:
         return visitor.visit_func_call(self)
@@ -111,6 +115,7 @@ class IndexExpr(ASTNode):
     # grammar: ID "[" expression "]"   e.g.  arr[i]
     name: str
     index: ASTNode
+    eval_type: str = "int"
 
     def accept(self, visitor: ASTVisitor) -> Any:
         return visitor.visit_index_expr(self)

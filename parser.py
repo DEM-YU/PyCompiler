@@ -186,7 +186,7 @@ class Parser:
     def _check_type_keyword(self) -> bool:
         return self.current_token.type in (
             TokenType.INT, TokenType.FLOAT,
-            TokenType.BOOL, TokenType.STR, TokenType.STRING,
+            TokenType.BOOL, TokenType.STRING,
         )
 
     def _parse_type(self) -> str:

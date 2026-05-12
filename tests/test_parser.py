@@ -346,11 +346,11 @@ class TestFunctionDecl:
         assert node.params[1].name == "b"
 
     def test_fn_mixed_param_types(self):
-        node = first_stmt("fn f(x: int, flag: bool, name: str) -> float { return 0; }")
+        node = first_stmt("fn f(x: int, flag: bool, name: string) -> float { return 0; }")
         assert len(node.params) == 3
         assert node.params[0].param_type == "int"
         assert node.params[1].param_type == "bool"
-        assert node.params[2].param_type == "str"
+        assert node.params[2].param_type == "string"
 
     def test_fn_fibonacci(self):
         src = "fn fib(n: int) -> int { if n <= 1 { return n; } return fib(n - 1) + fib(n - 2); }"

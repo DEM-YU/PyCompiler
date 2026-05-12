@@ -1,0 +1,11 @@
+fn process(s: string) {
+    print(s);
+}
+
+fn main() {
+    let a: string = "Deep architecture ";
+    let b: string = "validation";
+    let c: string = a + b;
+    let d: string = c; 
+    process(d);
+}

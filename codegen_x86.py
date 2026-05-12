@@ -10,9 +10,9 @@ class X86CodeGenerator:
     def __init__(self) -> None:
         self.var_offsets: dict[str, int] = {}
         self.current_offset: int = 0
-        self._pending_params: list[str] = []
+        self._pending_params: list[tuple[str, str]] = []
         self._func_params: dict[str, list[str]] = {}
-        self._heap_vars: set[str] = set()
+        self._str_vars: set[str] = set()
         self._str_pool: list[tuple[str, str]] = []
         self._str_index: dict[str, str] = {}
 
@@ -35,12 +35,12 @@ class X86CodeGenerator:
         for label, value in self._str_pool:
             data_lines.append(f'{label} db "{value}", 0')
         header = data_lines + [
-            "extern _printf",
-            "extern _malloc",
-            "extern _free",
-            "extern _strlen",
+            "extern printf",
+            "extern malloc",
+            "extern free",
+            "extern strlen",
             "section .text",
-            "global _main",
+            "global main",
         ]
         body = self._generate_all_functions(instructions)
         return "\n".join(header + body)
@@ -78,7 +78,7 @@ class X86CodeGenerator:
         self.var_offsets = {}
         self.current_offset = 0
         self._pending_params = []
-        self._heap_vars = set()
+        self._str_vars = set()
 
         # Pass 1: allocate stack slots for params then all other names.
         params = self._func_params.get(func_name, [])
@@ -91,7 +91,7 @@ class X86CodeGenerator:
         stack_size = (self.current_offset + 15) // 16 * 16
 
         # Prologue.
-        lines: list[str] = [f"_{func_name}:", "push rbp", "mov rbp, rsp"]
+        lines: list[str] = [f"{func_name}:", "push rbp", "mov rbp, rsp"]
         if stack_size > 0:
             lines.append(f"sub rsp, {stack_size}")
 
@@ -128,6 +128,7 @@ class X86CodeGenerator:
         if op == "MALLOC_STR":
             # arg1 = variable name (pointer), arg2 = raw string value (not a var).
             self._maybe_allocate(instr.arg1)
+            self._str_vars.add(str(instr.arg1))
             return
         if op == "FREE":
             # arg1 was already allocated when MALLOC_STR was prescanned.
@@ -139,11 +140,17 @@ class X86CodeGenerator:
             # Synthetic stack slots for the two strlen results.
             self._get_offset(f"{instr.result}_len1")
             self._get_offset(f"{instr.result}_len2")
+            self._str_vars.add(str(instr.result))
             return
         if op in ("LOAD_INDEX", "STORE_INDEX"):
             self._maybe_allocate(instr.arg1)
             self._maybe_allocate(instr.arg2)
             self._maybe_allocate(instr.result)
+            return
+        if op == "COPY" and instr.result_type == "string" and instr.result is not None:
+            self._maybe_allocate(instr.arg1)
+            self._maybe_allocate(instr.result)
+            self._str_vars.add(str(instr.result))
             return
         for val in (instr.result, instr.arg1, instr.arg2):
             self._maybe_allocate(val)
@@ -171,7 +178,7 @@ class X86CodeGenerator:
         if op == "COPY":
             return self._translate_copy(instr)
         if op == "PARAM":
-            self._pending_params.append(str(instr.arg1))
+            self._pending_params.append((str(instr.arg1), instr.result_type))
             return []
         if op == "CALL":
             return self._translate_call(instr)
@@ -196,8 +203,6 @@ class X86CodeGenerator:
     def _translate_copy(self, instr: TACInstruction) -> list[str]:
         src = str(instr.arg1)
         dst_name = str(instr.result)
-        if src in self._heap_vars:
-            self._heap_vars.add(dst_name)
         lines = self._load_operand(src, "rax")
         dst = self._get_offset(dst_name)
         lines.append(f"mov qword [rbp{dst}], rax")
@@ -233,10 +238,10 @@ class X86CodeGenerator:
             return self._translate_print_call()
         # User-defined function: load args into registers, then call.
         lines: list[str] = []
-        for i, param in enumerate(self._pending_params[:6]):
+        for i, (param, _) in enumerate(self._pending_params[:6]):
             lines.extend(self._load_operand(param, _PARAM_REGS[i]))
         self._pending_params.clear()
-        lines.append(f"call _{instr.arg1}")
+        lines.append(f"call {instr.arg1}")
         if instr.result is not None:
             dst = self._get_offset(str(instr.result))
             lines.append(f"mov qword [rbp{dst}], rax")
@@ -250,15 +255,15 @@ class X86CodeGenerator:
         return lines
 
     def _translate_print_call(self) -> list[str]:
-        param = self._pending_params.pop(0) if self._pending_params else "0"
+        param, param_type = self._pending_params.pop(0) if self._pending_params else ("0", "int")
         lines = self._load_operand(param, "rsi")
-        fmt_label = "fmts" if param in self._heap_vars else "fmt"
+        fmt_label = "fmts" if param_type == "string" else "fmt"
         lines += [
             f"lea rdi, [rel {fmt_label}]",
             "xor rax, rax",
             "mov rbx, rsp",
             "and rsp, -16",
-            "call _printf",
+            "call printf",
             "mov rsp, rbx",
         ]
         return lines
@@ -280,7 +285,7 @@ class X86CodeGenerator:
             f"mov rdi, {length + 1}",
             "mov rbx, rsp",
             "and rsp, -16",
-            "call _malloc",
+            "call malloc",
             "mov rsp, rbx",
             f"mov qword [rbp{dst}], rax",
             f"lea rsi, [rel {str_label}]",
@@ -288,7 +293,6 @@ class X86CodeGenerator:
             f"mov rcx, {length + 1}",
             "rep movsb",
         ]
-        self._heap_vars.add(name)
         return lines
 
     def _translate_free(self, instr: TACInstruction) -> list[str]:
@@ -298,7 +302,7 @@ class X86CodeGenerator:
             f"mov rdi, [rbp{src}]",
             "mov rbx, rsp",
             "and rsp, -16",
-            "call _free",
+            "call free",
             "mov rsp, rbx",
         ]
 
@@ -309,7 +313,7 @@ class X86CodeGenerator:
         src_offset = self._get_offset(name)
         result_offset = self._get_offset(result)
         lines = self._load_operand(index, "rcx")
-        if name in self._heap_vars:
+        if name in self._str_vars:
             lines += [
                 f"mov rax, [rbp{src_offset}]",
                 "movzx rax, byte [rax + rcx]",
@@ -329,7 +333,7 @@ class X86CodeGenerator:
         src_offset = self._get_offset(name)
         lines = self._load_operand(index, "rcx")
         lines += self._load_operand(value, "rdx")
-        if name in self._heap_vars:
+        if name in self._str_vars:
             lines += [
                 f"mov rax, [rbp{src_offset}]",
                 "mov byte [rax + rcx], dl",
@@ -350,20 +354,19 @@ class X86CodeGenerator:
         result_off = self._get_offset(result)
         len1_off = self._get_offset(f"{result}_len1")
         len2_off = self._get_offset(f"{result}_len2")
-        self._heap_vars.add(result)
         return [
             # strlen(s1)
             f"mov rdi, [rbp{s1_off}]",
             "mov rbx, rsp",
             "and rsp, -16",
-            "call _strlen",
+            "call strlen",
             "mov rsp, rbx",
             f"mov qword [rbp{len1_off}], rax",
             # strlen(s2)
             f"mov rdi, [rbp{s2_off}]",
             "mov rbx, rsp",
             "and rsp, -16",
-            "call _strlen",
+            "call strlen",
             "mov rsp, rbx",
             f"mov qword [rbp{len2_off}], rax",
             # malloc(len1 + len2 + 1)
@@ -373,7 +376,7 @@ class X86CodeGenerator:
             "mov rdi, rax",
             "mov rbx, rsp",
             "and rsp, -16",
-            "call _malloc",
+            "call malloc",
             "mov rsp, rbx",
             f"mov qword [rbp{result_off}], rax",
             # copy s1 bytes into result

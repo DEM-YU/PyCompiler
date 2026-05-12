@@ -31,9 +31,10 @@ from ast_nodes import (
 @dataclass
 class TACInstruction:
     op: str
-    arg1: Any = None   # first operand or function name for CALL
-    arg2: Any = None   # second operand or argument count for CALL; None for unary
-    result: Any = None # destination temp or label name; None for PARAM/void RETURN
+    arg1: Any = None        # first operand or function name for CALL
+    arg2: Any = None        # second operand or argument count for CALL; None for unary
+    result: Any = None      # destination temp or label name; None for PARAM/void RETURN
+    result_type: str = "int"  # scalar type of the result value
 
     def __str__(self) -> str:
         if self.op == "FUNC":
@@ -83,7 +84,6 @@ class IRGenerator(ASTVisitor):
         self.instructions: list[TACInstruction] = []
         self.temp_count: int = 0
         self.label_count: int = 0
-        self._string_vars: set[str] = set()
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -110,6 +110,13 @@ class IRGenerator(ASTVisitor):
     def _emit(self, instr: TACInstruction) -> None:
         self.instructions.append(instr)
 
+    def _expr_type(self, node: ASTNode) -> str:
+        if isinstance(node, StringLiteral):
+            return "string"
+        if isinstance(node, Literal):
+            return node.value_type
+        return getattr(node, "eval_type", "int")
+
     # ------------------------------------------------------------------
     # Top-level
     # ------------------------------------------------------------------
@@ -134,14 +141,12 @@ class IRGenerator(ASTVisitor):
         if isinstance(node.var_type, ArrayType):
             self._emit(TACInstruction(op="ALLOC_ARR", arg1=node.name, arg2=node.var_type.size))
             return
-        if node.var_type == "string":
-            self._string_vars.add(node.name)
-            if isinstance(node.initializer, StringLiteral):
-                self._emit(TACInstruction(op="MALLOC_STR", arg1=node.name, arg2=node.initializer.value))
-                return
+        if node.var_type == "string" and isinstance(node.initializer, StringLiteral):
+            self._emit(TACInstruction(op="MALLOC_STR", arg1=node.name, arg2=node.initializer.value, result_type="string"))
+            return
         if node.initializer is not None:
             val = node.initializer.accept(self)
-            self._emit(TACInstruction(op="COPY", arg1=val, result=node.name))
+            self._emit(TACInstruction(op="COPY", arg1=val, result=node.name, result_type=str(node.var_type)))
 
     # ------------------------------------------------------------------
     # Statements
@@ -149,7 +154,7 @@ class IRGenerator(ASTVisitor):
 
     def visit_assign_stmt(self, node: AssignStmt) -> None:
         val = node.value.accept(self)
-        self._emit(TACInstruction(op="COPY", arg1=val, result=node.name))
+        self._emit(TACInstruction(op="COPY", arg1=val, result=node.name, result_type=self._expr_type(node.value)))
 
     def visit_return_stmt(self, node: ReturnStmt) -> None:
         if node.value is not None:
@@ -189,7 +194,7 @@ class IRGenerator(ASTVisitor):
 
     def visit_for_stmt(self, node: ForStmt) -> None:
         init_val = node.init_value.accept(self)
-        self._emit(TACInstruction(op="COPY", arg1=init_val, result=node.var_name))
+        self._emit(TACInstruction(op="COPY", arg1=init_val, result=node.var_name, result_type="int"))
         start_label = self.new_label()
         end_label = self.new_label()
         self._emit(TACInstruction(op="LABEL", result=start_label))
@@ -197,7 +202,7 @@ class IRGenerator(ASTVisitor):
         self._emit(TACInstruction(op="IF_FALSE", arg1=cond, result=end_label))
         node.body.accept(self)
         step_val = node.step_value.accept(self)
-        self._emit(TACInstruction(op="COPY", arg1=step_val, result=node.step_var))
+        self._emit(TACInstruction(op="COPY", arg1=step_val, result=node.step_var, result_type="int"))
         self._emit(TACInstruction(op="JMP", result=start_label))
         self._emit(TACInstruction(op="LABEL", result=end_label))
 
@@ -216,19 +221,18 @@ class IRGenerator(ASTVisitor):
     def visit_binary_op(self, node: BinaryOp) -> str:
         left = node.left.accept(self)
         right = node.right.accept(self)
-        if node.op == "+" and left in self._string_vars and right in self._string_vars:
+        if node.op == "+" and node.eval_type == "string":
             t = self.new_temp()
-            self._emit(TACInstruction(op="CONCAT_STR", arg1=left, arg2=right, result=t))
-            self._string_vars.add(t)
+            self._emit(TACInstruction(op="CONCAT_STR", arg1=left, arg2=right, result=t, result_type="string"))
             return t
         t = self.new_temp()
-        self._emit(TACInstruction(op=node.op, arg1=left, arg2=right, result=t))
+        self._emit(TACInstruction(op=node.op, arg1=left, arg2=right, result=t, result_type=node.eval_type))
         return t
 
     def visit_unary_op(self, node: UnaryOp) -> str:
         operand = node.operand.accept(self)
         t = self.new_temp()
-        self._emit(TACInstruction(op=node.op, arg1=operand, result=t))
+        self._emit(TACInstruction(op=node.op, arg1=operand, result=t, result_type=node.eval_type))
         return t
 
     def visit_func_call(self, node: FuncCall) -> str:
@@ -237,10 +241,10 @@ class IRGenerator(ASTVisitor):
             self._emit(TACInstruction(op="FREE", arg1=target))
             return self.new_temp()   # dummy temp; free is void
         arg_vals = [arg.accept(self) for arg in node.args]
-        for val in arg_vals:
-            self._emit(TACInstruction(op="PARAM", arg1=val))
+        for val, arg in zip(arg_vals, node.args):
+            self._emit(TACInstruction(op="PARAM", arg1=val, result_type=self._expr_type(arg)))
         t = self.new_temp()
-        self._emit(TACInstruction(op="CALL", arg1=node.name, arg2=len(node.args), result=t))
+        self._emit(TACInstruction(op="CALL", arg1=node.name, arg2=len(node.args), result=t, result_type=node.eval_type))
         return t
 
     def visit_string_literal(self, node: StringLiteral) -> str:
@@ -250,7 +254,7 @@ class IRGenerator(ASTVisitor):
     def visit_index_expr(self, node: IndexExpr) -> str:
         index_temp = node.index.accept(self)
         result_temp = self.new_temp()
-        self._emit(TACInstruction(op="LOAD_INDEX", arg1=node.name, arg2=index_temp, result=result_temp))
+        self._emit(TACInstruction(op="LOAD_INDEX", arg1=node.name, arg2=index_temp, result=result_temp, result_type=node.eval_type))
         return result_temp
 
     def visit_index_assign_stmt(self, node: IndexAssignStmt) -> None:

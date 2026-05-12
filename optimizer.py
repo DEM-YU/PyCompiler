@@ -17,6 +17,11 @@ _TERMINAL_OPS: frozenset[str] = frozenset({"JMP", "RETURN"})
 # Ops whose result field names a jump target label.
 _JUMP_OPS: frozenset[str] = frozenset({"JMP", "IF_FALSE", "IF_TRUE"})
 
+# Ops that allocate resources and must never be silently eliminated even when
+# they appear to be unreachable, because removal would change observable
+# program behaviour (heap allocation, stack array initialisation).
+_SIDE_EFFECT_OPS: frozenset[str] = frozenset({"MALLOC_STR", "ALLOC_ARR"})
+
 
 def _parse_number(val: Any) -> int | float | None:
     """Return val parsed as int or float, or None if it is not a numeric literal."""
@@ -76,7 +81,7 @@ class Optimizer:
         val = self._apply_op(instr.op, left, right)
         if val is None:
             return None
-        return TACInstruction(op="COPY", arg1=str(val), result=instr.result)
+        return TACInstruction(op="COPY", arg1=str(val), result=instr.result, result_type=instr.result_type)
 
     def _apply_op(self, op: str, left: int | float, right: int | float) -> int | float | None:
         """Evaluate op(left, right) at compile time; return None when undefined."""
@@ -117,7 +122,7 @@ class Optimizer:
                 known.clear()
             a1 = known.get(str(instr.arg1), instr.arg1) if instr.arg1 is not None else None
             a2 = known.get(str(instr.arg2), instr.arg2) if instr.arg2 is not None else None
-            new_instr = TACInstruction(op=instr.op, arg1=a1, arg2=a2, result=instr.result)
+            new_instr = TACInstruction(op=instr.op, arg1=a1, arg2=a2, result=instr.result, result_type=instr.result_type)
             result.append(new_instr)
             # Record that result now holds a constant (or forget a stale binding).
             if new_instr.op == "COPY" and new_instr.result is not None:
@@ -143,7 +148,7 @@ class Optimizer:
             # A label or function entry ends any unreachable region.
             if instr.op in ("LABEL", "FUNC"):
                 skip = False
-            if not skip:
+            if not skip or instr.op in _SIDE_EFFECT_OPS:
                 result.append(instr)
             if instr.op in _TERMINAL_OPS:
                 skip = True

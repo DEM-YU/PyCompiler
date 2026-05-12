@@ -46,6 +46,8 @@
 A compiler built from scratch — no ANTLR, no PLY, no LLVM.  
 Every token is lexed by hand. Every register argument is placed by code you can read.
 
+> **Integer and String focused.** Nova's type system is designed around 64-bit integers and heap-managed strings. Floating-point and array support are present but secondary; the core semantics, optimizer, and x86-64 backend are optimized for `int` and `string` workloads.
+
 ---
 
 ## What This Is
@@ -240,15 +242,6 @@ Use `--dump-ast` to inspect the Abstract Syntax Tree:
 python main.py run examples/fibonacci.nv --dump-ast
 ```
 
-### Step 2 — Assemble and link (macOS / Apple Silicon via Rosetta)
-
-```bash
-nasm -f macho64 examples/fibonacci.asm -o fibonacci.o
-gcc fibonacci.o -o fibonacci
-./fibonacci
-# 55
-```
-
 ### Step 2 — Assemble and link (Linux x86-64)
 
 ```bash
@@ -256,6 +249,17 @@ nasm -f elf64 examples/fibonacci.asm -o fibonacci.o
 gcc fibonacci.o -o fibonacci
 ./fibonacci
 # 55
+```
+
+### Step 2 — Assemble and link (macOS via Rosetta / x86-64)
+
+> **Note:** The compiler targets the Linux System V ABI (no leading underscores on symbols). macOS Mach-O requires underscored symbols (`_main`, `_printf`, …). Running the generated `.asm` directly under macOS therefore requires either a Linux Docker container or a local symbol-rename step before assembling with `nasm -f macho64`.
+
+```bash
+# Recommended: use Docker
+docker run --rm -v "$PWD":/src -w /src nasm/nasm:latest \
+  nasm -f elf64 examples/fibonacci.asm -o fibonacci.o && \
+  gcc fibonacci.o -o fibonacci && ./fibonacci
 ```
 
 ### Running Tests
@@ -308,9 +312,9 @@ fn fib(n: int) -> int {
 }
 ```
 
-Generated x86-64 (excerpt):
+Generated x86-64 (excerpt, Linux ELF64 / System V ABI):
 ```nasm
-_fib:
+fib:
     push rbp
     mov rbp, rsp
     sub rsp, 48
@@ -331,12 +335,12 @@ L1:
     mov rdi, [rbp-8]
     mov rcx, 1
     sub rdi, rcx                ; n - 1
-    call _fib
+    call fib
     mov qword [rbp-32], rax     ; fib(n-1)
     mov rdi, [rbp-8]
     mov rcx, 2
     sub rdi, rcx                ; n - 2
-    call _fib
+    call fib
     mov qword [rbp-40], rax     ; fib(n-2)
     mov rax, [rbp-32]
     add rax, [rbp-40]

@@ -311,3 +311,53 @@ class TestCombinedOptimization:
         label_names = {i.result for i in result if i.op == "LABEL"}
         assert "L0" in label_names
         assert "L1" in label_names
+
+
+# ---------------------------------------------------------------------------
+# Side-effect ops — MALLOC_STR and ALLOC_ARR survive DCE
+# ---------------------------------------------------------------------------
+
+class TestSideEffectOps:
+    def test_malloc_str_survives_after_return(self):
+        instrs = [
+            instr("FUNC", result="f"),
+            instr("RETURN"),
+            instr("MALLOC_STR", arg1="x", arg2="hello"),
+        ]
+        result = Optimizer().optimize(instrs)
+        assert any(i.op == "MALLOC_STR" for i in result)
+
+    def test_alloc_arr_survives_after_return(self):
+        instrs = [
+            instr("FUNC", result="f"),
+            instr("RETURN"),
+            instr("ALLOC_ARR", arg1="arr", arg2=5),
+        ]
+        result = Optimizer().optimize(instrs)
+        assert any(i.op == "ALLOC_ARR" for i in result)
+
+    def test_plain_copy_still_removed_after_return(self):
+        instrs = [
+            instr("FUNC", result="f"),
+            instr("RETURN"),
+            instr("COPY", "5", result="x"),
+        ]
+        result = Optimizer().optimize(instrs)
+        copies = [i for i in result if i.op == "COPY"]
+        assert not copies
+
+    def test_result_type_preserved_through_folding(self):
+        from ir_gen import TACInstruction as TAC
+        original = TAC(op="+", arg1="3", arg2="4", result="t0", result_type="float")
+        result = Optimizer().optimize([original])
+        assert result[0].result_type == "float"
+
+    def test_result_type_preserved_through_propagation(self):
+        from ir_gen import TACInstruction as TAC
+        instrs = [
+            TAC(op="MALLOC_STR", arg1="s", arg2="hi", result_type="string"),
+            TAC(op="COPY", arg1="s", result="s2", result_type="string"),
+        ]
+        result = Optimizer().optimize(instrs)
+        copy = next(i for i in result if i.op == "COPY")
+        assert copy.result_type == "string"

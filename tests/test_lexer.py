@@ -50,16 +50,22 @@ def test_arithmetic_float_literal() -> None:
 # ---------------------------------------------------------------------------
 
 def test_variable_type_keywords() -> None:
-    tokens = lex_all("int count float speed bool active str name")
+    tokens = lex_all("int count float speed bool active string name")
     types = [t.type for t in tokens]
     assert types == [
-        TokenType.INT,   TokenType.ID,
-        TokenType.FLOAT, TokenType.ID,
-        TokenType.BOOL,  TokenType.ID,
-        TokenType.STR,   TokenType.ID,
+        TokenType.INT,    TokenType.ID,
+        TokenType.FLOAT,  TokenType.ID,
+        TokenType.BOOL,   TokenType.ID,
+        TokenType.STRING, TokenType.ID,
     ]
     assert tokens[1].value == "count"
     assert tokens[3].value == "speed"
+
+
+def test_str_lexes_as_identifier() -> None:
+    tokens = lex_all("str")
+    assert tokens[0].type == TokenType.ID
+    assert tokens[0].value == "str"
 
 
 def test_typed_identifier_syntax() -> None:
