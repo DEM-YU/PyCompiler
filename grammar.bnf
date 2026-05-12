@@ -1,0 +1,318 @@
+(* =============================================================================
+   Nova Language Grammar  —  EBNF Reference
+   =============================================================================
+   Version   : 1.0
+   File      : grammar.bnf
+   Target    : parser.py  (hand-written recursive-descent, LL(1))
+   Source    : PyCompiler Project Specification v1.0
+
+   Notation
+   --------
+   lower_case   non-terminal  (one parser method each)
+   UPPER_CASE   terminal token (produced by lexer.py)
+   "literal"    keyword or punctuation token matched by value
+   item*        zero or more repetitions
+   item+        one or more repetitions
+   item?        optional (zero or one)
+   ( a | b )    alternation / grouping
+   (* ... *)    comment
+
+   Parser strategy
+   ---------------
+   Each non-terminal maps to one private method in the Parser class.
+   Operator precedence is encoded in the grammar hierarchy: lower precedence
+   = higher in the tree = parsed first.  Each level calls the next, so the
+   parse tree naturally reflects correct binding.
+   ============================================================================= *)
+
+
+(* -----------------------------------------------------------------------------
+   1.  Program
+   A Nova source file is a flat sequence of top-level declarations.
+   Functions must be declared before they are called (no hoisting in MVP).
+   ----------------------------------------------------------------------------- *)
+
+program         ::= top_decl*
+
+top_decl        ::= func_decl
+                  | statement
+
+
+(* -----------------------------------------------------------------------------
+   2.  Function Declaration
+       fn name ( params ) -> return_type { body }
+   The return-type annotation is optional; omitting "->" means the function
+   produces no value.  The parser method: parse_func_decl().
+   ----------------------------------------------------------------------------- *)
+
+func_decl       ::= "fn" ID "(" param_list? ")" ( "->" type )? block
+
+param_list      ::= param ( "," param )*
+
+param           ::= ID ":" type
+
+
+(* -----------------------------------------------------------------------------
+   3.  Types  (scalars only in MVP)
+   ----------------------------------------------------------------------------- *)
+
+type            ::= "int"
+                  | "float"
+                  | "bool"
+                  | "str"
+
+
+(* -----------------------------------------------------------------------------
+   4.  Statements
+   ----------------------------------------------------------------------------- *)
+
+block           ::= "{" statement* "}"
+
+statement       ::= var_decl
+                  | assign_stmt
+                  | if_stmt
+                  | while_stmt
+                  | for_stmt
+                  | return_stmt
+                  | expr_stmt
+
+
+(* -- 4.1  Variable declaration -----------------------------------------------
+   Syntax:  type identifier = expression ;
+   Examples:
+       int x = 0;
+       float speed = 3.14;
+       bool active = true;
+       str name = "Nova";
+   Initializer is optional; omitting it leaves the variable undefined.
+   The parser dispatches to var_decl when the current token is a type keyword
+   (int | float | bool | str), which gives LL(1) lookahead of 1.
+   ----------------------------------------------------------------------------- *)
+
+var_decl        ::= type ID ( "=" expression )? ";"
+
+
+(* -- 4.2  Assignment ----------------------------------------------------------
+   Syntax:  identifier = expression ;
+   The parser distinguishes assign_stmt from expr_stmt with 2-token lookahead:
+   after reading ID, it peeks at the next token — "=" means assignment,
+   anything else ("+", "(", ";", ...) means the ID starts an expression.
+   ----------------------------------------------------------------------------- *)
+
+assign_stmt     ::= ID "=" expression ";"
+
+
+(* -- 4.3  If / else-if / else ------------------------------------------------
+   Each branch body is a block (braces required, no bare single statements).
+   "else if" is two separate tokens; the parser checks for "if" after "else".
+   Examples:
+       if x > 0 { return x; }
+       if x > 0 { return x; } else { return 0; }
+       if x > 0 { pos(); } else if x < 0 { neg(); } else { zero(); }
+   ----------------------------------------------------------------------------- *)
+
+if_stmt         ::= "if" expression block
+                    ( "else" "if" expression block )*
+                    ( "else" block )?
+
+
+(* -- 4.4  While loop ---------------------------------------------------------
+   Condition is re-evaluated before each iteration.
+   ----------------------------------------------------------------------------- *)
+
+while_stmt      ::= "while" expression block
+
+
+(* -- 4.5  For loop  (C-style, no outer parentheses) --------------------------
+   Syntax:  for ID = init ; condition ; ID = step { body }
+   Example:
+       for i = 0; i < 10; i = i + 1 { print(i); }
+   The init and step use the same ID = expression form as assign_stmt but
+   without a trailing semicolon after the step expression.
+   ----------------------------------------------------------------------------- *)
+
+for_stmt        ::= "for" ID "=" expression ";"
+                          expression ";"
+                          ID "=" expression
+                          block
+
+
+(* -- 4.6  Return -------------------------------------------------------------
+   A return with no expression is valid only in void functions.
+   ----------------------------------------------------------------------------- *)
+
+return_stmt     ::= "return" expression? ";"
+
+
+(* -- 4.7  Expression statement -----------------------------------------------
+   Any expression can appear as a statement; the semicolon terminates it.
+   Used primarily for function calls: print(x);
+   ----------------------------------------------------------------------------- *)
+
+expr_stmt       ::= expression ";"
+
+
+(* -----------------------------------------------------------------------------
+   5.  Expressions
+   Organized from LOWEST to HIGHEST precedence.
+   Each level is a distinct non-terminal so that parse_<level>() calls
+   parse_<level+1>() — the recursion encodes the precedence correctly.
+   Associativity is left for all binary operators (achieved by the while loop
+   in each parse method), and right for unary (achieved by recursion).
+   ----------------------------------------------------------------------------- *)
+
+expression      ::= or_expr
+
+
+(* -- Level 1: Logical OR  ||  (lowest binary precedence) --------------------- *)
+
+or_expr         ::= and_expr ( "||" and_expr )*
+
+
+(* -- Level 2: Logical AND  && ------------------------------------------------ *)
+
+and_expr        ::= equality_expr ( "&&" equality_expr )*
+
+
+(* -- Level 3: Equality  == != ------------------------------------------------ *)
+
+equality_expr   ::= relational_expr ( ( "==" | "!=" ) relational_expr )*
+
+
+(* -- Level 4: Relational / Comparison  < > <= >= ----------------------------- *)
+
+relational_expr ::= additive_expr ( ( "<" | ">" | "<=" | ">=" ) additive_expr )*
+
+
+(* -- Level 5: Addition and Subtraction  + - ---------------------------------- *)
+
+additive_expr   ::= multiplicative_expr ( ( "+" | "-" ) multiplicative_expr )*
+
+
+(* -- Level 6: Multiplication, Division, Modulo  * / % ----------------------- *)
+
+multiplicative_expr ::= unary_expr ( ( "*" | "/" | "%" ) unary_expr )*
+
+
+(* -- Level 7: Unary prefix  - !  (right-associative via recursion) ----------- *)
+
+unary_expr      ::= ( "-" | "!" ) unary_expr
+                  | primary
+
+
+(* -- Level 8: Primary  (highest binding) ------------------------------------- *)
+(*
+   Function call vs plain identifier: the parser peeks at the token after ID.
+   If it is "(" → function call; otherwise → variable reference.
+   This is a common LL(1) trick that keeps the grammar simple.
+*)
+
+primary         ::= INTEGER                       (* 42, 0, 100          *)
+                  | FLOAT_LITERAL                 (* 3.14, 0.5           *)
+                  | STRING_LITERAL                (* "hello"             *)
+                  | "true"
+                  | "false"
+                  | ID "(" arg_list? ")"          (* function call       *)
+                  | ID                            (* variable reference   *)
+                  | "(" expression ")"            (* parenthesised expr  *)
+
+arg_list        ::= expression ( "," expression )*
+
+
+(* -----------------------------------------------------------------------------
+   6.  Operator Precedence Summary  (highest to lowest)
+   Mirrors the grammar levels above; serves as a quick parser reference.
+   -----------------------------------------------------------------------------
+
+   Level   Operators            Associativity   Grammar rule
+   -----------------------------------------------------------------------
+     8     ( )  literals  call  —               primary
+     7     - (unary)   !        right           unary_expr
+     6     *  /  %              left            multiplicative_expr
+     5     +  -                 left            additive_expr
+     4     <  >  <=  >=         left            relational_expr
+     3     ==  !=               left            equality_expr
+     2     &&                   left            and_expr
+     1     ||                   left            or_expr
+   ----------------------------------------------------------------------- *)
+
+
+(* -----------------------------------------------------------------------------
+   7.  Terminal Tokens  (produced by lexer.py / TokenType enum)
+   ----------------------------------------------------------------------------- *)
+
+(*
+   Literals
+   --------
+   INTEGER        [0-9]+                       e.g.  0  42  255
+   FLOAT_LITERAL  [0-9]+ "." [0-9]+            e.g.  3.14  0.5
+   STRING_LITERAL '"' ( any char except '"' and newline )* '"'
+   ID             [a-zA-Z_][a-zA-Z0-9_]*       (not a reserved keyword)
+
+   Keywords  (reserved — cannot be used as identifiers)
+   --------
+   fn   if   else   while   for   return
+   int  float  bool  str
+   true  false
+
+   Operators
+   ---------
+   +   -   *   /   %
+   ==  !=  <   >   <=  >=
+   &&  ||  !
+
+   Punctuation
+   -----------
+   (   )   {   }   [   ]   ,   :   ->   ;
+*)
+
+
+(* -----------------------------------------------------------------------------
+   8.  Complete Example  (fibonacci — from the project specification)
+   ----------------------------------------------------------------------------- *)
+
+(*
+   # fibonacci.nv
+   fn fib(n: int) -> int {
+       if n <= 1 { return n; }
+       return fib(n - 1) + fib(n - 2);
+   }
+
+   Parse trace for  fib(n - 1) + fib(n - 2) :
+
+   additive_expr
+     multiplicative_expr
+       unary_expr
+         primary  →  ID "(" arg_list ")"          ← fib(n - 1)
+           arg_list  →  additive_expr
+             multiplicative_expr → unary_expr → primary → ID   ← n
+             "-"
+             multiplicative_expr → unary_expr → primary → 1
+     "+"
+     multiplicative_expr
+       unary_expr
+         primary  →  ID "(" arg_list ")"          ← fib(n - 2)
+*)
+
+
+(* -----------------------------------------------------------------------------
+   9.  Optional Extensions  (post-MVP — do not implement in parser.py yet)
+   ----------------------------------------------------------------------------- *)
+
+(*
+   9.1  One-dimensional arrays (static size)
+        type    ::= type "[" INTEGER "]"           e.g.  int[10]
+        primary ::= primary "[" expression "]"     index access
+        assign  ::= ID "[" expression "]" "=" expression ";"
+
+   9.2  Structs
+        struct_decl ::= "struct" ID "{" ( ID ":" type ";" )+ "}"
+        primary     ::= ID "." ID                  field access
+
+   9.3  Built-in I/O
+        print() and input() are treated as ordinary function calls.
+        The semantic analyser pre-populates the symbol table with their
+        signatures rather than introducing new grammar productions.
+          print : ( str | int | float | bool ) -> void
+          input : () -> str
+*)

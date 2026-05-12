@@ -1,0 +1,24 @@
+# Build artifacts — Nova compiler output
+*.asm
+*.o
+
+# Compiled executables (no extension, produced by nasm + ld)
+# Track by pattern: files in root with no extension that are executable.
+# List known outputs explicitly to avoid catching unrelated files.
+fibonacci
+string_test
+bubble_sort
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
