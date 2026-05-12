@@ -1,0 +1,15 @@
+fn main() {
+    # 1. 声明字符串
+    # 表面上只是一句话，底层却要求编译器计算长度，
+    # 调用操作系统的 _malloc 申请堆内存，然后把返回的内存地址（指针）存到栈里。
+    let msg: string = "Hello, System-Level Programming!";
+    let suffix: string = " - PyCompiler x86-64 Native";
+    
+    # 2. 验证指针读取与打印
+    # 底层需要去栈里找到 msg 的地址指针，再顺藤摸瓜去堆内存里把字符串喂给 _printf
+    print(msg);
+    print(suffix);
+
+    # 3. 安全退出
+    return 0;
+}
