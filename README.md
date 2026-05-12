@@ -58,6 +58,12 @@ This project answers the question: *what actually happens between `source code` 
 
 ## Core Features
 
+### Strict Static Typing
+An integer-focused type system (with string support) designed to eliminate runtime type overhead and provide deterministic register allocation.
+
+### Systems-Level Memory Control
+Manual heap management via `malloc` and `free` integration, allowing for high-performance dynamic memory patterns.
+
 ### Static Type System
 Nova is statically typed with compile-time type checking at every expression boundary.
 
@@ -361,20 +367,9 @@ The goal was a codebase where any intermediate engineer can open a file, read it
 
 ## Roadmap
 
-### Near-term
-- [ ] **Register allocator** — replace the current all-on-stack approach with linear-scan register allocation; eliminate most `mov` round-trips
-- [ ] **Float support** — `xmm` registers, `movsd`/`addsd` instructions
-
-### Long-term
-
-**Self-hosting**  
-The end goal for any serious compiler: rewrite PyCompiler's front-end in Nova itself. The IR generator and optimizer are structured precisely to make this tractable — the visitor pattern translates directly to Nova's function dispatch, and the flat TAC list is representable as a Nova array of tagged structs.
-
-**Garbage Collection**  
-The current `free()` model is manual and explicit by design — it forces the programmer (and the compiler author) to understand ownership at the call-site level. The next step is a tracing GC: maintain a live-object graph rooted at the stack frame chain, walk it at allocation pressure, and reclaim unreachable heap nodes. The heap pointer model already in place (`[rbp-N]` holds raw addresses) is precisely the foundation a GC needs.
-
-**LLVM IR backend**  
-A second backend that emits LLVM IR instead of NASM would give Nova access to the full LLVM optimization pipeline without replacing the hand-written front-end. The TAC abstraction is already backend-agnostic.
+- [ ] **IEEE 754 Floating Point** — Integrating XMM registers and floating-point instruction set.
+- [ ] **Self-Hosting** — Re-implementing the compiler in the Nova language itself.
+- [ ] **ARM64 Backend** — Extending the codegen to support Apple Silicon and Graviton architectures.
 
 ---
 
