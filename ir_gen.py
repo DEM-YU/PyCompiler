@@ -248,8 +248,9 @@ class IRGenerator(ASTVisitor):
         return t
 
     def visit_string_literal(self, node: StringLiteral) -> str:
-        # Return the quoted value as an immediate operand for PARAM / COPY.
-        return f'"{node.value}"'
+        tmp = self.new_temp()
+        self._emit(TACInstruction(op="MALLOC_STR", arg1=tmp, arg2=node.value, result_type="string"))
+        return tmp
 
     def visit_index_expr(self, node: IndexExpr) -> str:
         index_temp = node.index.accept(self)

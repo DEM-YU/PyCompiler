@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ast_nodes import (
     ASTNode, ASTVisitor, ArrayType, Block, BinaryOp, FuncCall, FunctionDecl,
@@ -21,6 +21,7 @@ class Symbol:
     category: str    # "var" | "func"
     line: int
     col: int
+    param_types: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -100,8 +101,14 @@ class SemanticAnalyzer(ASTVisitor):
         for node in program.body:
             if isinstance(node, FunctionDecl):
                 ret_type = node.return_type if node.return_type is not None else "void"
-                sym = Symbol(name=node.name, type=ret_type,
-                             category="func", line=node.line, col=node.col)
+                sym = Symbol(
+                    name=node.name,
+                    type=ret_type,
+                    category="func",
+                    line=node.line,
+                    col=node.col,
+                    param_types=[p.param_type for p in node.params],
+                )
                 self.global_scope.define(sym)
 
     # ------------------------------------------------------------------
@@ -292,8 +299,25 @@ class SemanticAnalyzer(ASTVisitor):
                 line=node.line,
                 col=node.col,
             )
-        for arg in node.args:
-            arg.accept(self)
+        if sym.param_types:
+            if len(node.args) != len(sym.param_types):
+                raise CompilerError(
+                    message=(
+                        f"'{node.name}' expects {len(sym.param_types)} argument(s) "
+                        f"but got {len(node.args)}"
+                    ),
+                    line=node.line,
+                    col=node.col,
+                )
+            for i, (arg, expected) in enumerate(zip(node.args, sym.param_types)):
+                actual = arg.accept(self)
+                self._assert_type(
+                    expected, actual, arg.line, arg.col,
+                    context=f"argument {i + 1} of '{node.name}'",
+                )
+        else:
+            for arg in node.args:
+                arg.accept(self)
         node.eval_type = sym.type
         return sym.type
 

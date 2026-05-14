@@ -15,6 +15,7 @@ class X86CodeGenerator:
         self._str_vars: set[str] = set()
         self._str_pool: list[tuple[str, str]] = []
         self._str_index: dict[str, str] = {}
+        self._array_sizes: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -79,6 +80,7 @@ class X86CodeGenerator:
         self.current_offset = 0
         self._pending_params = []
         self._str_vars = set()
+        self._array_sizes = {}
 
         # Pass 1: allocate stack slots for params then all other names.
         params = self._func_params.get(func_name, [])
@@ -115,7 +117,23 @@ class X86CodeGenerator:
 
     def _prescan(self, instr: TACInstruction) -> None:
         op = instr.op
-        if op in ("LABEL", "JMP", "FUNC", "ALLOC_ARR"):
+        if op in ("LABEL", "JMP", "FUNC"):
+            return
+        if op == "ALLOC_ARR":
+            name = str(instr.arg1)
+            size = int(instr.arg2)
+            # Allocate slots in reverse index order so that the base address
+            # (stored under the array name) lands at the most-negative rbp
+            # offset.  Forward indexing [base + i*8] then correctly reaches
+            # element i, because each successive index is 8 bytes closer to
+            # rbp (i.e. a less-negative offset).
+            #   arr[size-1]  →  rbp - 8        (allocated first, highest addr)
+            #   arr[1]       →  rbp - (size-1)*8
+            #   arr[0]/name  →  rbp - size*8   (allocated last, lowest addr)
+            for i in range(size - 1, 0, -1):
+                self._get_offset(f"__{name}_{i}")
+            self._get_offset(name)
+            self._array_sizes[name] = size
             return
         if op in ("IF_FALSE", "IF_TRUE"):
             # result is a label, not a variable — skip it.
@@ -185,7 +203,7 @@ class X86CodeGenerator:
         if op == "RETURN":
             return self._translate_return(instr)
         if op == "ALLOC_ARR":
-            return [f"; {instr}  ; TODO: stack array x86 support"]
+            return []
         if op == "STORE_INDEX":
             return self._translate_store_index_x86(instr)
         if op == "LOAD_INDEX":
@@ -261,10 +279,7 @@ class X86CodeGenerator:
         lines += [
             f"lea rdi, [rel {fmt_label}]",
             "xor rax, rax",
-            "mov rbx, rsp",
-            "and rsp, -16",
             "call printf",
-            "mov rsp, rbx",
         ]
         return lines
 
@@ -283,10 +298,7 @@ class X86CodeGenerator:
         dst = self._get_offset(name)
         lines = [
             f"mov rdi, {length + 1}",
-            "mov rbx, rsp",
-            "and rsp, -16",
             "call malloc",
-            "mov rsp, rbx",
             f"mov qword [rbp{dst}], rax",
             f"lea rsi, [rel {str_label}]",
             "mov rdi, rax",
@@ -300,10 +312,7 @@ class X86CodeGenerator:
         src = self._get_offset(name)
         return [
             f"mov rdi, [rbp{src}]",
-            "mov rbx, rsp",
-            "and rsp, -16",
             "call free",
-            "mov rsp, rbx",
         ]
 
     def _translate_load_index_x86(self, instr: TACInstruction) -> list[str]:
@@ -357,27 +366,18 @@ class X86CodeGenerator:
         return [
             # strlen(s1)
             f"mov rdi, [rbp{s1_off}]",
-            "mov rbx, rsp",
-            "and rsp, -16",
             "call strlen",
-            "mov rsp, rbx",
             f"mov qword [rbp{len1_off}], rax",
             # strlen(s2)
             f"mov rdi, [rbp{s2_off}]",
-            "mov rbx, rsp",
-            "and rsp, -16",
             "call strlen",
-            "mov rsp, rbx",
             f"mov qword [rbp{len2_off}], rax",
             # malloc(len1 + len2 + 1)
             f"mov rax, [rbp{len1_off}]",
             f"add rax, [rbp{len2_off}]",
             "inc rax",
             "mov rdi, rax",
-            "mov rbx, rsp",
-            "and rsp, -16",
             "call malloc",
-            "mov rsp, rbx",
             f"mov qword [rbp{result_off}], rax",
             # copy s1 bytes into result
             "mov rdi, rax",
